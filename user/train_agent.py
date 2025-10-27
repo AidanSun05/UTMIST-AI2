@@ -562,11 +562,7 @@ def move_to_opponent_reward(
 
     # Compute the dot product of the normalized vectors to figure out how much
     # current movement (aka velocity) is in alignment with the direction they need to go in
-    reward = np.dot(player_position_dif / direc_to_opp_norm, direction_to_opponent / direc_to_opp_norm)
-
-    multiplier = -1 if player.weapon == "Punch" else 1
-
-    return multiplier * reward
+    return np.dot(player_position_dif / direc_to_opp_norm, direction_to_opponent / direc_to_opp_norm)
 
 def fall_reward(env: WarehouseBrawl) -> float:
     player = env.objects["player"]
