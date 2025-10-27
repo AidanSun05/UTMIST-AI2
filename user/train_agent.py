@@ -2,7 +2,7 @@
 TRAINING: AGENT
 
 This file contains all the types of Agent classes, the Reward Function API, and the built-in train function from our multi-agent RL API for self-play training.
-- All of these Agent classes are each described below. 
+- All of these Agent classes are each described below.
 
 Running this file will initiate the training function, and will:
 a) Start training from scratch
@@ -13,13 +13,13 @@ b) Continue training from a specific timestep given an input `file_path`
 # ----------------------------- IMPORTS -----------------------------
 # -------------------------------------------------------------------
 
-import torch 
+import torch
 import gymnasium as gym
 from torch.nn import functional as F
 from torch import nn as nn
 import numpy as np
 import pygame
-from stable_baselines3 import A2C, PPO, SAC, DQN, DDPG, TD3, HER 
+from stable_baselines3 import A2C, PPO, SAC, DQN, DDPG, TD3, HER
 from sb3_contrib import RecurrentPPO
 from stable_baselines3.common.base_class import BaseAlgorithm
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
@@ -90,6 +90,7 @@ class RecurrentPPOAgent(Agent):
         self.episode_starts = np.ones((1,), dtype=bool)
 
     def _initialize(self) -> None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         if self.file_path is None:
             policy_kwargs = {
                 'activation_fn': nn.ReLU,
@@ -103,13 +104,15 @@ class RecurrentPPOAgent(Agent):
             self.model = RecurrentPPO("MlpLstmPolicy",
                                       self.env,
                                       verbose=0,
+                                      learning_rate=1e-4,
                                       n_steps=30*90*20,
                                       batch_size=16,
                                       ent_coef=0.05,
-                                      policy_kwargs=policy_kwargs)
+                                      policy_kwargs=policy_kwargs,
+                                      device=device)
             del self.env
         else:
-            self.model = RecurrentPPO.load(self.file_path)
+            self.model = RecurrentPPO.load(self.file_path, device=device)
 
     def reset(self) -> None:
         self.episode_starts = True
@@ -184,7 +187,7 @@ class UserInputAgent(Agent):
 
     def predict(self, obs):
         action = self.act_helper.zeros()
-       
+
         keys = pygame.key.get_pressed()
         if keys[pygame.K_w]:
             action = self.act_helper.press_keys(['w'], action)
@@ -254,7 +257,7 @@ class ClockworkAgent(Agent):
         action = self.act_helper.press_keys(self.current_action_data)
         self.steps += 1  # Increment step counter
         return action
-    
+
 class MLPPolicy(nn.Module):
     def __init__(self, obs_dim: int = 64, action_dim: int = 10, hidden_dim: int = 64):
         """
@@ -286,27 +289,27 @@ class MLPExtractor(BaseFeaturesExtractor):
     def __init__(self, observation_space: gym.Space, features_dim: int = 64, hidden_dim: int = 64):
         super(MLPExtractor, self).__init__(observation_space, features_dim)
         self.model = MLPPolicy(
-            obs_dim=observation_space.shape[0], 
+            obs_dim=observation_space.shape[0],
             action_dim=10,
             hidden_dim=hidden_dim,
         )
-    
+
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
         return self.model(obs)
-    
+
     @classmethod
     def get_policy_kwargs(cls, features_dim: int = 64, hidden_dim: int = 64) -> dict:
         return dict(
             features_extractor_class=cls,
             features_extractor_kwargs=dict(features_dim=features_dim, hidden_dim=hidden_dim) #NOTE: features_dim = 10 to match action space output
         )
-    
+
 class CustomAgent(Agent):
     def __init__(self, sb3_class: Optional[Type[BaseAlgorithm]] = PPO, file_path: str = None, extractor: BaseFeaturesExtractor = None):
         self.sb3_class = sb3_class
         self.extractor = extractor
         super().__init__(file_path)
-    
+
     def _initialize(self) -> None:
         if self.file_path is None:
             self.model = self.sb3_class("MlpPolicy", self.env, policy_kwargs=self.extractor.get_policy_kwargs(), verbose=0, n_steps=30*90*3, batch_size=128, ent_coef=0.01)
@@ -479,6 +482,110 @@ def head_to_middle_reward(
 
     return reward
 
+def move_to_spawner_reward(env: WarehouseBrawl) -> float:
+    player: Player = env.objects["player"]
+    if player.weapon != "Punch":
+        return 0.0
+
+    x = player.body.position.x
+    left_gap = x < -6.5
+    right_gap = x > 6.5
+    if left_gap or right_gap:
+        return 0.0
+
+    spawners = env.get_spawner_info()
+    top_spawner = None
+    top_spawner_dist = 1000.0
+    player_x, player_y = player.body.position.x, player.body.position.y
+
+    for spawner in spawners:
+        _, (x, y) = spawner
+        spawner_dist = ((x - player_x) ** 2 + (y - player_y) ** 2) ** 0.5
+        if spawner_dist < top_spawner_dist:
+            top_spawner = spawner
+            top_spawner_dist = spawner_dist
+
+    if top_spawner is None:
+        return 0.0
+
+    player_position_dif = np.array([player.body.velocity.x, player.body.velocity.y])
+    dir_to_spawner = np.array([top_spawner[1][0] - player_x,
+                               top_spawner[1][1] - player_y])
+
+    # Prevent division by zero or extremely small values
+    dir_to_spawner_norm = np.linalg.norm(dir_to_spawner)
+    player_pos_dif_norm = np.linalg.norm(player_position_dif)
+
+    if dir_to_spawner_norm < 1e-6 or player_pos_dif_norm < 1e-6:
+        return 0.0
+
+    first_n_secs = 5.0
+    # scale_factor = max(first_n_secs - env.time_elapsed, 0.0) / first_n_secs + 1
+    return np.dot(player_position_dif / dir_to_spawner, dir_to_spawner / dir_to_spawner_norm)
+
+def move_to_opponent_reward(
+    env: WarehouseBrawl,
+) -> float:
+    """
+    Computes the reward based on whether the agent is moving toward the opponent.
+    The reward is calculated by taking the dot product of the agent's normalized velocity
+    with the normalized direction vector toward the opponent.
+
+    Args:
+        env (WarehouseBrawl): The game environment
+
+    Returns:
+        float: The computed reward
+    """
+    # Getting agent and opponent from the enviornment
+    player: Player = env.objects["player"]
+    opponent: Player = env.objects["opponent"]
+
+    x = player.body.position.x
+    left_gap = x < -6.5
+    right_gap = x > 6.5
+    if left_gap or right_gap:
+        return 0.0
+
+    # Extracting player velocity and position from environment
+    player_position_dif = np.array([player.body.velocity.x, player.body.velocity.y])
+
+    direction_to_opponent = np.array([opponent.body.position.x - player.body.position.x,
+                                      opponent.body.position.y - player.body.position.y])
+
+    # Prevent division by zero or extremely small values
+    direc_to_opp_norm = np.linalg.norm(direction_to_opponent)
+    player_pos_dif_norm = np.linalg.norm(player_position_dif)
+
+    if direc_to_opp_norm < 1e-6 or player_pos_dif_norm < 1e-6:
+        return 0.0
+
+    # Compute the dot product of the normalized vectors to figure out how much
+    # current movement (aka velocity) is in alignment with the direction they need to go in
+    reward = np.dot(player_position_dif / direc_to_opp_norm, direction_to_opponent / direc_to_opp_norm)
+
+    multiplier = -1 if player.weapon == "Punch" else 1
+
+    return multiplier * reward
+
+def fall_reward(env: WarehouseBrawl) -> float:
+    player = env.objects["player"]
+    x = player.body.position.x
+    y = player.body.position.y
+    dy = player.body.velocity.y
+
+    left_gap = x < -6.5
+    right_gap = x > 6.5
+
+    if left_gap or right_gap:
+        return -1.0
+
+    mid_gap = -2.5 < x < 2.5
+    if mid_gap and dy >= 0:
+        return -1.0
+
+    return 0.0
+
 def head_to_opponent(
     env: WarehouseBrawl,
 ) -> float:
@@ -517,7 +624,7 @@ def on_knockout_reward(env: WarehouseBrawl, agent: str) -> float:
         return -1.0
     else:
         return 1.0
-    
+
 def on_equip_reward(env: WarehouseBrawl, agent: str) -> float:
     if agent == "player":
         if env.objects["player"].weapon == "Hammer":
@@ -546,9 +653,12 @@ def gen_reward_manager():
         #'target_height_reward': RewTerm(func=base_height_l2, weight=0.0, params={'target_height': -4, 'obj_name': 'player'}),
         'danger_zone_reward': RewTerm(func=danger_zone_reward, weight=0.5),
         'damage_interaction_reward': RewTerm(func=damage_interaction_reward, weight=1.0),
+        'move_to_spawner_reward': RewTerm(func=move_to_spawner_reward, weight=2.2),
+        'move_to_opponent_reward': RewTerm(func=move_to_opponent_reward, weight=2.0),
+        'fall_reward': RewTerm(func=fall_reward, weight=1.0),
         #'head_to_middle_reward': RewTerm(func=head_to_middle_reward, weight=0.01),
         #'head_to_opponent': RewTerm(func=head_to_opponent, weight=0.05),
-        'penalize_attack_reward': RewTerm(func=in_state_reward, weight=-0.04, params={'desired_state': AttackState}),
+        # 'penalize_attack_reward': RewTerm(func=in_state_reward, weight=-0.04, params={'desired_state': AttackState}),
         'holding_more_than_3_keys': RewTerm(func=holding_more_than_3_keys, weight=-0.01),
         #'taunt_reward': RewTerm(func=in_state_reward, weight=0.2, params={'desired_state': TauntState}),
     }
@@ -569,10 +679,10 @@ The main function runs training. You can change configurations such as the Agent
 '''
 if __name__ == '__main__':
     # Create agent
-    my_agent = CustomAgent(sb3_class=PPO, extractor=MLPExtractor)
+    # my_agent = CustomAgent(sb3_class=PPO, extractor=MLPExtractor)
 
     # Start here if you want to train from scratch. e.g:
-    #my_agent = RecurrentPPOAgent()
+    my_agent = RecurrentPPOAgent()
 
     # Start here if you want to train from a specific timestep. e.g:
     #my_agent = RecurrentPPOAgent(file_path='checkpoints/experiment_3/rl_model_120006_steps.zip')
