@@ -583,7 +583,7 @@ def gen_reward_manager():
         'damage_interaction_reward': RewTerm(func=damage_interaction_reward, weight=1.0),
         'move_to_spawner_reward': RewTerm(func=move_to_spawner_reward, weight=2.2),
         'move_to_opponent_reward': RewTerm(func=move_to_opponent_reward, weight=2.0),
-        'fall_reward': RewTerm(func=fall_reward, weight=0.6),
+        'fall_reward': RewTerm(func=fall_reward, weight=1.5),
         'holding_more_than_3_keys': RewTerm(func=holding_more_than_3_keys, weight=-0.01),
     }
     signal_subscriptions = {
