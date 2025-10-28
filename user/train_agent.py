@@ -436,96 +436,44 @@ def danger_zone_reward(
 
     return reward * env.dt
 
-def in_state_reward(
-    env: WarehouseBrawl,
-    desired_state: Type[PlayerObjectState]=BackDashState,
-) -> float:
-    """
-    Applies a penalty for every time frame player surpases a certain height threshold in the environment.
+def is_on_edge(player: Player) -> bool:
+    x = player.body.position.x
+    return x < -6.5 or x > 6.5
 
-    Args:
-        env (WarehouseBrawl): The game environment.
-        zone_penalty (int): The penalty applied when the player is in the danger zone.
-        zone_height (float): The height threshold defining the danger zone.
-
-    Returns:
-        float: The computed penalty as a tensor.
-    """
-    # Get player object from the environment
+def move_to_target_reward(env: WarehouseBrawl, tx: float, ty: float) -> float:
     player: Player = env.objects["player"]
+    if is_on_edge(player):
+        return 0.0
 
-    # Apply penalty if the player is in the danger zone
-    reward = 1 if isinstance(player.state, desired_state) else 0.0
+    player_position_dif = np.array([player.body.velocity.x, player.body.velocity.y])
+    dir_to_target = np.array([tx - player.body.position.x, ty - player.body.position.y])
 
-    return reward * env.dt
+    # Prevent division by zero or extremely small values
+    dir_to_target_norm = np.linalg.norm(dir_to_target)
+    player_pos_dif_norm = np.linalg.norm(player_position_dif)
 
-def head_to_middle_reward(
-    env: WarehouseBrawl,
-) -> float:
-    """
-    Applies a penalty for every time frame player surpases a certain height threshold in the environment.
+    if dir_to_target_norm < 1e-6 or player_pos_dif_norm < 1e-6:
+        return 0.0
 
-    Args:
-        env (WarehouseBrawl): The game environment.
-        zone_penalty (int): The penalty applied when the player is in the danger zone.
-        zone_height (float): The height threshold defining the danger zone.
-
-    Returns:
-        float: The computed penalty as a tensor.
-    """
-    # Get player object from the environment
-    player: Player = env.objects["player"]
-
-    # Apply penalty if the player is in the danger zone
-    multiplier = -1 if player.body.position.x > 0 else 1
-    reward = multiplier * (player.body.position.x - player.prev_x)
-
-    return reward
+    return np.dot(player_position_dif / player_pos_dif_norm, dir_to_target / dir_to_target_norm)
 
 def move_to_spawner_reward(env: WarehouseBrawl) -> float:
     player: Player = env.objects["player"]
     if player.weapon != "Punch":
         return 0.0
 
-    x = player.body.position.x
-    left_gap = x < -6.5
-    right_gap = x > 6.5
-    if left_gap or right_gap:
-        return 0.0
-
     spawners = env.get_spawner_info()
-    top_spawner = None
-    top_spawner_dist = 1000.0
+    if len(spawners) == 0:
+        return 0.0
+
     player_x, player_y = player.body.position.x, player.body.position.y
+    top_spawner = min(spawners, key=lambda spawner: (spawner[1][0] - player_x) ** 2 + (spawner[1][1] - player_y) ** 2)
 
-    for spawner in spawners:
-        _, (x, y) = spawner
-        spawner_dist = ((x - player_x) ** 2 + (y - player_y) ** 2) ** 0.5
-        if spawner_dist < top_spawner_dist:
-            top_spawner = spawner
-            top_spawner_dist = spawner_dist
-
-    if top_spawner is None:
-        return 0.0
-
-    player_position_dif = np.array([player.body.velocity.x, player.body.velocity.y])
-    dir_to_spawner = np.array([top_spawner[1][0] - player_x,
-                               top_spawner[1][1] - player_y])
-
-    # Prevent division by zero or extremely small values
-    dir_to_spawner_norm = np.linalg.norm(dir_to_spawner)
-    player_pos_dif_norm = np.linalg.norm(player_position_dif)
-
-    if dir_to_spawner_norm < 1e-6 or player_pos_dif_norm < 1e-6:
-        return 0.0
-
-    first_n_secs = 5.0
+    # first_n_secs = 5.0
     # scale_factor = max(first_n_secs - env.time_elapsed, 0.0) / first_n_secs + 1
-    return np.dot(player_position_dif / dir_to_spawner, dir_to_spawner / dir_to_spawner_norm)
+    return move_to_target_reward(env, top_spawner[1][0], top_spawner[1][1])
 
-def move_to_opponent_reward(
-    env: WarehouseBrawl,
-) -> float:
+def move_to_opponent_reward(env: WarehouseBrawl) -> float:
     """
     Computes the reward based on whether the agent is moving toward the opponent.
     The reward is calculated by taking the dot product of the agent's normalized velocity
@@ -537,69 +485,54 @@ def move_to_opponent_reward(
     Returns:
         float: The computed reward
     """
-    # Getting agent and opponent from the enviornment
-    player: Player = env.objects["player"]
-    opponent: Player = env.objects["opponent"]
 
-    x = player.body.position.x
-    left_gap = x < -6.5
-    right_gap = x > 6.5
-    if left_gap or right_gap:
-        return 0.0
-
-    # Extracting player velocity and position from environment
-    player_position_dif = np.array([player.body.velocity.x, player.body.velocity.y])
-
-    direction_to_opponent = np.array([opponent.body.position.x - player.body.position.x,
-                                      opponent.body.position.y - player.body.position.y])
-
-    # Prevent division by zero or extremely small values
-    direc_to_opp_norm = np.linalg.norm(direction_to_opponent)
-    player_pos_dif_norm = np.linalg.norm(player_position_dif)
-
-    if direc_to_opp_norm < 1e-6 or player_pos_dif_norm < 1e-6:
-        return 0.0
-
-    # Compute the dot product of the normalized vectors to figure out how much
-    # current movement (aka velocity) is in alignment with the direction they need to go in
-    return np.dot(player_position_dif / direc_to_opp_norm, direction_to_opponent / direc_to_opp_norm)
+    opponent = env.objects["opponent"]
+    tx, ty = opponent.body.position.x, opponent.body.position.y
+    return move_to_target_reward(env, tx, ty)
 
 def fall_reward(env: WarehouseBrawl) -> float:
-    player = env.objects["player"]
-    x = player.body.position.x
-    y = player.body.position.y
-    dy = player.body.velocity.y
+    player = env.objects["player"].body
+    x = player.position.x
+    y = player.position.y
 
-    left_gap = x < -6.5
-    right_gap = x > 6.5
+    # Large penalty for falling off
+    if y > 5:
+        return -50
 
-    if left_gap or right_gap:
-        return -1.0
+    # Boundary penalties
+    if x < -6:
+        return 20 * max(-1, x + 6)
+    elif x > 6:
+        return 20 * max(-1, -x + 6)
 
+    # Reward successful crossing, penalize risky behavior
     mid_gap = -2.5 < x < 2.5
-    if mid_gap and dy >= 0:
-        return -1.0
 
-    return 0.0
+    if mid_gap:
+        # With positive Y down:
+        # - dy > 0 means falling (BAD)
+        # - dy < 0 means jumping up (GOOD)
 
-def head_to_opponent(
-    env: WarehouseBrawl,
-) -> float:
+        # Base penalty for being in the gap (encourage quick crossing)
+        reward = -0.2
 
-    # Get player object from the environment
-    player: Player = env.objects["player"]
-    opponent: Player = env.objects["opponent"]
+        # Reward horizontal movement across the gap
+        reward += 0.3 * abs(player.velocity.x)
 
-    # Apply penalty if the player is in the danger zone
-    multiplier = -1 if player.body.position.x > opponent.body.position.x else 1
-    reward = multiplier * (player.body.position.x - player.prev_x)
+        # Penalize falling velocity (dy > 0) and reward upward movement (dy < 0)
+        if player.velocity.y > 0:
+            # Falling
+            reward -= 0.5 * player.velocity.y
+        else:
+            # Moving upward
+            reward += 0.3 * abs(player.velocity.y)
 
-    return reward
+        return reward
 
-def holding_more_than_3_keys(
-    env: WarehouseBrawl,
-) -> float:
+    # REWARD for staying on platforms
+    return 1.0
 
+def holding_more_than_3_keys(env: WarehouseBrawl) -> float:
     # Get player object from the environment
     player: Player = env.objects["player"]
 
@@ -646,17 +579,12 @@ Add your dictionary of RewardFunctions here using RewTerms
 '''
 def gen_reward_manager():
     reward_functions = {
-        #'target_height_reward': RewTerm(func=base_height_l2, weight=0.0, params={'target_height': -4, 'obj_name': 'player'}),
         'danger_zone_reward': RewTerm(func=danger_zone_reward, weight=0.5),
         'damage_interaction_reward': RewTerm(func=damage_interaction_reward, weight=1.0),
         'move_to_spawner_reward': RewTerm(func=move_to_spawner_reward, weight=2.2),
         'move_to_opponent_reward': RewTerm(func=move_to_opponent_reward, weight=2.0),
-        'fall_reward': RewTerm(func=fall_reward, weight=1.0),
-        #'head_to_middle_reward': RewTerm(func=head_to_middle_reward, weight=0.01),
-        #'head_to_opponent': RewTerm(func=head_to_opponent, weight=0.05),
-        # 'penalize_attack_reward': RewTerm(func=in_state_reward, weight=-0.04, params={'desired_state': AttackState}),
+        'fall_reward': RewTerm(func=fall_reward, weight=0.6),
         'holding_more_than_3_keys': RewTerm(func=holding_more_than_3_keys, weight=-0.01),
-        #'taunt_reward': RewTerm(func=in_state_reward, weight=0.2, params={'desired_state': TauntState}),
     }
     signal_subscriptions = {
         'on_win_reward': ('win_signal', RewTerm(func=on_win_reward, weight=50)),
