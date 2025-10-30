@@ -381,7 +381,7 @@ class SelfPlayHandler(ABC):
 
     def __init__(self, agent_partial: partial):
         self.agent_partial = agent_partial
-    
+
     def get_model_from_path(self, path) -> Agent:
         if path:
             try:
@@ -402,7 +402,7 @@ class SelfPlayHandler(ABC):
 class SelfPlayLatest(SelfPlayHandler):
     def __init__(self, agent_partial: partial):
         super().__init__(agent_partial)
-    
+
     def get_opponent(self) -> Agent:
         assert self.save_handler is not None, "Save handler must be specified for self-play"
         chosen_path = self.save_handler.get_latest_model_path()
@@ -411,7 +411,7 @@ class SelfPlayLatest(SelfPlayHandler):
 class SelfPlayRandom(SelfPlayHandler):
     def __init__(self, agent_partial: partial):
         super().__init__(agent_partial)
-    
+
     def get_opponent(self) -> Agent:
         assert self.save_handler is not None, "Save handler must be specified for self-play"
         chosen_path = self.save_handler.get_random_model_path()
@@ -513,7 +513,7 @@ class SelfPlayWarehouseBrawl(gymnasium.Env):
                 # Give SelfPlayHandler references
                 selfplay_handler: SelfPlayHandler = value[1]
                 selfplay_handler.save_handler = self.save_handler
-                selfplay_handler.env = self       
+                selfplay_handler.env = self
 
         self.raw_env = WarehouseBrawl(resolution=resolution, train_mode=True)
         self.action_space = self.raw_env.action_space
@@ -539,8 +539,8 @@ class SelfPlayWarehouseBrawl(gymnasium.Env):
         }
 
         observations, rewards, terminated, truncated, info = self.raw_env.step(full_action)
-        self.opponent_obs = observations[1]
-     
+        self.opponent_obs = observations[1].copy()
+
         if self.save_handler is not None:
             self.save_handler.process()
 
@@ -660,7 +660,7 @@ def run_match(agent_1: Agent | partial,
             img = env.render()
             img = np.rot90(img, k=-1)  #video output rotate fix
             img = np.fliplr(img)  # Mirror/flip the image horizontally
-            writer.writeFrame(img) 
+            writer.writeFrame(img)
             del img
 
       if terminated or truncated:
@@ -682,7 +682,7 @@ def run_match(agent_1: Agent | partial,
         result = Result.LOSS
     else:
         result = Result.DRAW
-    
+
     match_stats = MatchStats(
         match_time=env.steps / env.fps,
         player1=player_1_stats,
@@ -772,7 +772,7 @@ class UserInputAgent(Agent):
 
     def predict(self, obs):
         action = self.act_helper.zeros()
-       
+
         keys = pygame.key.get_pressed()
         if keys[pygame.K_w]:
             action = self.act_helper.press_keys(['w'], action)
@@ -1064,7 +1064,7 @@ def run_real_time_match(agent_1: UserInputAgent, agent_2: Agent, max_timesteps=3
         CameraResolution.MEDIUM: (720, 1280),
         CameraResolution.HIGH: (1080, 1920)
     }
-    
+
     screen = pygame.display.set_mode(resolutions[resolution][::-1])  # Set screen dimensions
 
 
@@ -1086,17 +1086,17 @@ def run_real_time_match(agent_1: UserInputAgent, agent_2: Agent, max_timesteps=3
     timestep = 0
    # platform1 = env.objects["platform1"] #mohamed
     #stage2 = env.objects["stage2"]
-    background_image = pygame.image.load('environment/assets/map/bg.jpg').convert() 
+    background_image = pygame.image.load('environment/assets/map/bg.jpg').convert()
     while running and timestep < max_timesteps:
-       
-        # Pygame event to handle real-time user input 
-       
+
+        # Pygame event to handle real-time user input
+
         for event in pygame.event.get():
             if event.type == QUIT:
                 running = False
             if event.type == pygame.VIDEORESIZE:
                  screen = pygame.display.set_mode(event.size, pygame.RESIZABLE)
-       
+
         action_1 = agent_1.predict(obs_1)
 
         # AI input
@@ -1109,10 +1109,10 @@ def run_real_time_match(agent_1: UserInputAgent, agent_2: Agent, max_timesteps=3
         obs_2 = observations[1]
 
         # Render the game
-        
+
         img = env.render()
         screen.blit(pygame.surfarray.make_surface(img), (0, 0))
-     
+
         pygame.display.flip()
 
         # Control frame rate (30 fps)
@@ -1137,7 +1137,7 @@ def run_real_time_match(agent_1: UserInputAgent, agent_2: Agent, max_timesteps=3
         result = Result.LOSS
     else:
         result = Result.DRAW
-    
+
     match_stats = MatchStats(
         match_time=timestep / 30.0,
         player1=player_1_stats,
