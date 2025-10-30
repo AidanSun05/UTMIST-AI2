@@ -112,6 +112,7 @@ class RecurrentPPOAgent(Agent):
             #                           policy_kwargs=policy_kwargs,
             #                           device=device,
             #                           tensorboard_log="tb_log")
+
             policy_kwargs = {
                 'activation_fn': nn.ReLU,
                 'net_arch': [dict(pi=[32, 32], vf=[32, 32])],
@@ -130,7 +131,18 @@ class RecurrentPPOAgent(Agent):
                              tensorboard_log="tb_log")
             del self.env
         else:
+            policy_kwargs = {
+                'activation_fn': nn.Tanh,
+                'net_arch': [dict(pi=[64, 64, 32], vf=[64, 64, 32])],
+                'share_features_extractor': False,
+            }
+
             self.model = PPO.load(self.file_path, device=device)
+            self.model.learning_rate = lambda p: 1e-6 + (1e-5 - 1e-6) * p
+            self.model.ent_coef = 0.01
+            self.model.clip_range = lambda _: 0.1
+            self.model.batch_size = 512
+            self.model.tensorboard_log = "tb_log"
 
     def reset(self) -> None:
         self.episode_starts = True
@@ -578,10 +590,10 @@ if __name__ == '__main__':
     # my_agent = CustomAgent(sb3_class=PPO, extractor=MLPExtractor)
 
     # Start here if you want to train from scratch. e.g:
-    my_agent = RecurrentPPOAgent()
+    # my_agent = RecurrentPPOAgent()
 
     # Start here if you want to train from a specific timestep. e.g:
-    #my_agent = RecurrentPPOAgent(file_path='checkpoints/experiment_3/rl_model_120006_steps.zip')
+    my_agent = RecurrentPPOAgent(file_path='checkpoints/experiment_8/rl_model_1100011_steps.zip')
 
     # Reward manager
     reward_manager = gen_reward_manager()
@@ -614,6 +626,6 @@ if __name__ == '__main__':
         save_handler,
         opponent_cfg,
         CameraResolution.LOW,
-        train_timesteps=1_000_000_000,
+        train_timesteps=2_000_000,
         train_logging=TrainLogging.PLOT
     )
