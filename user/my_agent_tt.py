@@ -12,36 +12,24 @@ Tenstorrent hardware.
 Usual workflow is first define your PyTorch modules using torch operations as seen in class MLPPolicy
 The next step is to convert your weights to ttnn tensors and run forward pass on them.
 
-Check out these ttnn tutorials here for how to get started with using ttnn APIs: 
-- https://github.com/tenstorrent/tt-metal/tree/main/ttnn    
+Check out these ttnn tutorials here for how to get started with using ttnn APIs:
+- https://github.com/tenstorrent/tt-metal/tree/main/ttnn
 - https://github.com/tenstorrent/tt-metal/blob/main/ttnn/tutorials/001.ipynb
 - https://github.com/tenstorrent/tt-metal/blob/main/ttnn/tutorials/002.ipynb
 - ...
 """
 
 class MLPPolicy(nn.Module):
-    def __init__(self, obs_dim, action_dim, hidden_dim=64):
-        """
-        A 3-layer MLP policy:
-        obs -> Linear(hidden_dim) -> ReLU -> Linear(hidden_dim) -> ReLU -> Linear(action_dim)
-        """
+    def __init__(self, obs_dim: int = 64, action_dim: int = 10, hidden_dim: int = 64):
         super(MLPPolicy, self).__init__()
-
-        # Input layer
         self.fc1 = nn.Linear(obs_dim, hidden_dim, dtype=torch.bfloat16)
-        # Hidden layer
         self.fc2 = nn.Linear(hidden_dim, hidden_dim, dtype=torch.bfloat16)
-        # Output layer
-        self.fc3 = nn.Linear(hidden_dim, action_dim, dtype=torch.bfloat16)
+        self.fc3 = nn.Linear(hidden_dim, hidden_dim, dtype=torch.bfloat16)
 
     def forward(self, obs):
-        """
-        obs: [batch_size, obs_dim]
-        returns: [batch_size, action_dim]
-        """
         x = F.relu(self.fc1(obs))
         x = F.relu(self.fc2(x))
-        return self.fc3(x)
+        return F.relu(self.fc3(x))
 
 
 class TTMLPPolicy(nn.Module):
@@ -82,7 +70,7 @@ class TTMLPPolicy(nn.Module):
         x2 = ttnn.linear(x1, self.fc2, bias=self.fc2_b, activation="relu")
         x1.deallocate()
 
-        x3 = ttnn.linear(x2, self.fc3, bias=self.fc3_b)
+        x3 = ttnn.linear(x2, self.fc3, bias=self.fc3_b, activation="relu")
         x2.deallocate()
 
         tt_out = ttnn.to_torch(x3).flatten().to(torch.float32)
@@ -93,12 +81,12 @@ class TTMLPPolicy(nn.Module):
 def check_pcc(tensor1: torch.Tensor, tensor2: torch.Tensor, threshold: float = 0.99) -> bool:
     """
     Check if the Pearson correlation coefficient (PCC) between two tensors exceeds a given threshold.
-    
+
     Args:
         tensor1 (torch.Tensor): First tensor.
         tensor2 (torch.Tensor): Second tensor.
         threshold (float): Minimum acceptable correlation (default: 0.99).
-    
+
     Returns:
         bool: True if PCC >= threshold, else False.
     """
@@ -122,13 +110,13 @@ def check_pcc(tensor1: torch.Tensor, tensor2: torch.Tensor, threshold: float = 0
 
 
 def test_mlp_policy():
-    
+
     # Open the device (since we are only using single devices N150 cards, your mesh shape will be 1x1)
     mesh_device = ttnn.open_mesh_device(ttnn.MeshShape(1,1))
-    
+
     # Dimensions based on our custom RL environment
     batch_size = 1
-    action_dim = 10 
+    action_dim = 10
     hidden_dim = 64
     obs_dim = 64
 

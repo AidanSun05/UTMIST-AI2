@@ -293,19 +293,19 @@ class MLPPolicy(nn.Module):
         super(MLPPolicy, self).__init__()
         self.fc1 = nn.Linear(obs_dim, hidden_dim)
         self.fc2 = nn.Linear(hidden_dim, hidden_dim)
-        self.fc3 = nn.Linear(hidden_dim, hidden_dim)  # Feature extraction only
+        self.fc3 = nn.Linear(hidden_dim, hidden_dim)
 
     def forward(self, obs):
         x = F.relu(self.fc1(obs))
         x = F.relu(self.fc2(x))
-        return F.relu(self.fc3(x))  # Features for both policy and value heads
+        return F.relu(self.fc3(x))
 
 class MLPExtractor(BaseFeaturesExtractor):
     def __init__(self, observation_space: gym.Space, features_dim: int = 64, hidden_dim: int = 64):
         super(MLPExtractor, self).__init__(observation_space, features_dim)
         self.model = MLPPolicy(
             obs_dim=observation_space.shape[0],
-            action_dim=10,  # Not directly used in extractor
+            action_dim=10,
             hidden_dim=hidden_dim,
         )
 
@@ -322,10 +322,10 @@ class CustomAgent(Agent):
         if self.file_path is None:
             policy_kwargs = {
                 'activation_fn': nn.ReLU,
-                'net_arch': [dict(pi=[64, 64], vf=[64, 64])],  # Separate heads after features
+                'net_arch': [dict(pi=[64, 64], vf=[64, 64])],
                 'features_extractor_class': MLPExtractor,
                 'features_extractor_kwargs': dict(features_dim=64, hidden_dim=64),
-                'share_features_extractor': True,  # Now this makes sense
+                'share_features_extractor': True,
                 'log_std_init': -0.5,
                 'ortho_init': True,
             }
@@ -334,13 +334,13 @@ class CustomAgent(Agent):
                                         self.env,
                                         policy_kwargs=policy_kwargs,
                                         verbose=2,
-                                        learning_rate=2e-5,  # Very conservative for custom architecture
+                                        learning_rate=2e-5,
                                         n_steps=1024,
-                                        batch_size=128,  # Smaller batches for more updates
+                                        batch_size=128,
                                         n_epochs=8,
                                         ent_coef=0.02,
                                         clip_range=0.15,
-                                        vf_coef=0.8,  # Higher value focus for stability
+                                        vf_coef=0.8,
                                         max_grad_norm=0.8,
                                         gamma=0.99,
                                         gae_lambda=0.92,
