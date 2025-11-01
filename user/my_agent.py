@@ -21,9 +21,91 @@ from environment.agent import Agent
 from stable_baselines3 import PPO, A2C # Sample RL Algo imports
 from sb3_contrib import RecurrentPPO # Importing an LSTM
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import gymnasium as gym
+from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
+
 # To run the sample TTNN model, you can uncomment the 2 lines below:
 import ttnn
-from user.my_agent_tt import TTMLPPolicy, MLPExtractor
+
+
+class MLPPolicy(nn.Module):
+    def __init__(self, obs_dim: int = 64, action_dim: int = 10, hidden_dim: int = 64):
+        super(MLPPolicy, self).__init__()
+        self.fc1 = nn.Linear(obs_dim, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
+        self.fc3 = nn.Linear(hidden_dim, hidden_dim)
+
+    def forward(self, obs):
+        x = F.relu(self.fc1(obs.to(torch.float32)))
+        x = F.relu(self.fc2(x))
+        return F.relu(self.fc3(x)).to(torch.bfloat16)
+
+class MLPExtractor(BaseFeaturesExtractor):
+    def __init__(self, observation_space: gym.Space, features_dim: int = 64, hidden_dim: int = 64):
+        super(MLPExtractor, self).__init__(observation_space, features_dim)
+        self.model = MLPPolicy(
+            obs_dim=observation_space.shape[0],
+            action_dim=10,
+            hidden_dim=hidden_dim,
+        )
+
+    def forward(self, obs: torch.Tensor) -> torch.Tensor:
+        return self.model(obs)
+
+    @classmethod
+    def get_policy_kwargs(cls, features_dim: int = 64, hidden_dim: int = 64) -> dict:
+        return dict(
+            features_extractor_class=cls,
+            features_extractor_kwargs=dict(features_dim=features_dim, hidden_dim=hidden_dim) #NOTE: features_dim = 10 to match action space output
+        )
+
+class TTMLPPolicy(nn.Module):
+    def __init__(self, state_dict, mesh_device):
+        super(TTMLPPolicy, self).__init__()
+        self.mesh_device = mesh_device
+        self.fc1 = ttnn.from_torch(
+            state_dict["fc1.weight"].T,
+            device=mesh_device,
+            memory_config=ttnn.DRAM_MEMORY_CONFIG,
+            layout=ttnn.TILE_LAYOUT,
+        )
+        self.fc2 = ttnn.from_torch(
+            state_dict["fc2.weight"].T,
+            device=mesh_device,
+            memory_config=ttnn.DRAM_MEMORY_CONFIG,
+            layout=ttnn.TILE_LAYOUT,
+        )
+        self.fc3 = ttnn.from_torch(
+            state_dict["fc3.weight"].T,
+            device=mesh_device,
+            memory_config=ttnn.DRAM_MEMORY_CONFIG,
+            layout=ttnn.TILE_LAYOUT,
+        )
+
+        self.fc1_b = ttnn.from_torch(state_dict["fc1.bias"], device=mesh_device, memory_config=ttnn.DRAM_MEMORY_CONFIG)
+        self.fc2_b = ttnn.from_torch(state_dict["fc2.bias"], device=mesh_device, memory_config=ttnn.DRAM_MEMORY_CONFIG)
+        self.fc3_b = ttnn.from_torch(state_dict["fc3.bias"], device=mesh_device, memory_config=ttnn.DRAM_MEMORY_CONFIG)
+
+    def forward(self, obs: torch.Tensor) -> torch.Tensor:
+        # print("Running TT forward pass!")
+        obs = obs.to(torch.bfloat16)
+        tt_obs = ttnn.from_torch(obs, device=self.mesh_device, layout=ttnn.TILE_LAYOUT)
+
+        x1 = ttnn.linear(tt_obs, self.fc1, bias=self.fc1_b, activation="relu")
+        tt_obs.deallocate()
+
+        x2 = ttnn.linear(x1, self.fc2, bias=self.fc2_b, activation="relu")
+        x1.deallocate()
+
+        x3 = ttnn.linear(x2, self.fc3, bias=self.fc3_b, activation="relu")
+        x2.deallocate()
+
+        tt_out = ttnn.to_torch(x3).flatten().to(torch.float32)
+
+        return tt_out
 
 
 class SubmittedAgent(Agent):
