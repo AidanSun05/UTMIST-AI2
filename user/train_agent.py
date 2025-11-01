@@ -290,49 +290,27 @@ class ClockworkAgent(Agent):
 
 class MLPPolicy(nn.Module):
     def __init__(self, obs_dim: int = 64, action_dim: int = 10, hidden_dim: int = 64):
-        """
-        A 3-layer MLP policy:
-        obs -> Linear(hidden_dim) -> ReLU -> Linear(hidden_dim) -> ReLU -> Linear(action_dim)
-        """
         super(MLPPolicy, self).__init__()
-
-        # Input layer
-        self.fc1 = nn.Linear(obs_dim, hidden_dim, dtype=torch.float32)
-        # Hidden layer
-        self.fc2 = nn.Linear(hidden_dim, hidden_dim, dtype=torch.float32)
-        # Output layer
-        self.fc3 = nn.Linear(hidden_dim, hidden_dim, dtype=torch.float32)
+        self.fc1 = nn.Linear(obs_dim, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
+        self.fc3 = nn.Linear(hidden_dim, hidden_dim)  # Feature extraction only
 
     def forward(self, obs):
-        """
-        obs: [batch_size, obs_dim]
-        returns: [batch_size, action_dim]
-        """
         x = F.relu(self.fc1(obs))
         x = F.relu(self.fc2(x))
-        return self.fc3(x)
+        return F.relu(self.fc3(x))  # Features for both policy and value heads
 
 class MLPExtractor(BaseFeaturesExtractor):
-    '''
-    Class that defines an MLP Base Features Extractor
-    '''
     def __init__(self, observation_space: gym.Space, features_dim: int = 64, hidden_dim: int = 64):
         super(MLPExtractor, self).__init__(observation_space, features_dim)
         self.model = MLPPolicy(
             obs_dim=observation_space.shape[0],
-            action_dim=10,
+            action_dim=10,  # Not directly used in extractor
             hidden_dim=hidden_dim,
         )
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
         return self.model(obs)
-
-    @classmethod
-    def get_policy_kwargs(cls, features_dim: int = 64, hidden_dim: int = 64) -> dict:
-        return dict(
-            features_extractor_class=cls,
-            features_extractor_kwargs=dict(features_dim=features_dim, hidden_dim=hidden_dim) #NOTE: features_dim = 10 to match action space output
-        )
 
 class CustomAgent(Agent):
     def __init__(self, sb3_class: Optional[Type[BaseAlgorithm]] = PPO, file_path: str = None, extractor: BaseFeaturesExtractor = None):
@@ -342,7 +320,32 @@ class CustomAgent(Agent):
 
     def _initialize(self) -> None:
         if self.file_path is None:
-            self.model = self.sb3_class("MlpPolicy", self.env, policy_kwargs=self.extractor.get_policy_kwargs(), verbose=0, n_steps=30*90*3, batch_size=128, ent_coef=0.01)
+            policy_kwargs = {
+                'activation_fn': nn.ReLU,
+                'net_arch': [dict(pi=[64, 64], vf=[64, 64])],  # Separate heads after features
+                'features_extractor_class': MLPExtractor,
+                'features_extractor_kwargs': dict(features_dim=64, hidden_dim=64),
+                'share_features_extractor': True,  # Now this makes sense
+                'log_std_init': -0.5,
+                'ortho_init': True,
+            }
+
+            self.model = self.sb3_class("MlpPolicy",
+                                        self.env,
+                                        policy_kwargs=policy_kwargs,
+                                        verbose=2,
+                                        learning_rate=2e-5,  # Very conservative for custom architecture
+                                        n_steps=1024,
+                                        batch_size=128,  # Smaller batches for more updates
+                                        n_epochs=8,
+                                        ent_coef=0.02,
+                                        clip_range=0.15,
+                                        vf_coef=0.8,  # Higher value focus for stability
+                                        max_grad_norm=0.8,
+                                        gamma=0.99,
+                                        gae_lambda=0.92,
+                                        normalize_advantage=True,
+                                        tensorboard_log="tb_log")
             del self.env
         else:
             self.model = self.sb3_class.load(self.file_path)
@@ -587,13 +590,13 @@ The main function runs training. You can change configurations such as the Agent
 '''
 if __name__ == '__main__':
     # Create agent
-    # my_agent = CustomAgent(sb3_class=PPO, extractor=MLPExtractor)
+    my_agent = CustomAgent(sb3_class=PPO, extractor=MLPExtractor)
 
     # Start here if you want to train from scratch. e.g:
     # my_agent = RecurrentPPOAgent()
 
     # Start here if you want to train from a specific timestep. e.g:
-    my_agent = RecurrentPPOAgent(file_path='checkpoints/experiment_8/rl_model_1100011_steps.zip')
+    # my_agent = RecurrentPPOAgent(file_path='checkpoints/experiment_8/rl_model_1100011_steps.zip')
 
     # Reward manager
     reward_manager = gen_reward_manager()
@@ -626,6 +629,6 @@ if __name__ == '__main__':
         save_handler,
         opponent_cfg,
         CameraResolution.LOW,
-        train_timesteps=2_000_000,
+        train_timesteps=5_000_000,
         train_logging=TrainLogging.PLOT
     )
