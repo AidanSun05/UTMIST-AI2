@@ -4,6 +4,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from loguru import logger
+import gymnasium as gym
+from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
 """
 my_agent_tt demonstrates how to take a PyTorch model / agent and allows you to reimplement your agent using TTNN to leverage
@@ -22,15 +24,33 @@ Check out these ttnn tutorials here for how to get started with using ttnn APIs:
 class MLPPolicy(nn.Module):
     def __init__(self, obs_dim: int = 64, action_dim: int = 10, hidden_dim: int = 64):
         super(MLPPolicy, self).__init__()
-        self.fc1 = nn.Linear(obs_dim, hidden_dim, dtype=torch.bfloat16)
-        self.fc2 = nn.Linear(hidden_dim, hidden_dim, dtype=torch.bfloat16)
-        self.fc3 = nn.Linear(hidden_dim, hidden_dim, dtype=torch.bfloat16)
+        self.fc1 = nn.Linear(obs_dim, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
+        self.fc3 = nn.Linear(hidden_dim, hidden_dim)
 
     def forward(self, obs):
-        x = F.relu(self.fc1(obs))
+        x = F.relu(self.fc1(obs.to(torch.float32)))
         x = F.relu(self.fc2(x))
-        return F.relu(self.fc3(x))
+        return F.relu(self.fc3(x)).to(torch.bfloat16)
 
+class MLPExtractor(BaseFeaturesExtractor):
+    def __init__(self, observation_space: gym.Space, features_dim: int = 64, hidden_dim: int = 64):
+        super(MLPExtractor, self).__init__(observation_space, features_dim)
+        self.model = MLPPolicy(
+            obs_dim=observation_space.shape[0],
+            action_dim=10,
+            hidden_dim=hidden_dim,
+        )
+
+    def forward(self, obs: torch.Tensor) -> torch.Tensor:
+        return self.model(obs)
+
+    @classmethod
+    def get_policy_kwargs(cls, features_dim: int = 64, hidden_dim: int = 64) -> dict:
+        return dict(
+            features_extractor_class=cls,
+            features_extractor_kwargs=dict(features_dim=features_dim, hidden_dim=hidden_dim) #NOTE: features_dim = 10 to match action space output
+        )
 
 class TTMLPPolicy(nn.Module):
     def __init__(self, state_dict, mesh_device):
@@ -60,7 +80,7 @@ class TTMLPPolicy(nn.Module):
         self.fc3_b = ttnn.from_torch(state_dict["fc3.bias"], device=mesh_device, memory_config=ttnn.DRAM_MEMORY_CONFIG)
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
-        print("Running TT forward pass!")
+        # print("Running TT forward pass!")
         obs = obs.to(torch.bfloat16)
         tt_obs = ttnn.from_torch(obs, device=self.mesh_device, layout=ttnn.TILE_LAYOUT)
 
