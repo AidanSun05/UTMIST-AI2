@@ -26,7 +26,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import gymnasium as gym
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
-import numpy as np
 
 class MLPPolicy(nn.Module):
     def __init__(self, obs_dim: int = 64, action_dim: int = 10, hidden_dim: int = 64):
@@ -75,7 +74,7 @@ class SubmittedAgent(Agent):
             self.model = PPO("MlpPolicy", self.env, verbose=0)
             del self.env
         else:
-            self.model = PPO.load(self.file_path, custom_objects={'policy_kwargs': MLPExtractor.get_policy_kwargs(),})
+            self.model = PPO.load(self.file_path, custom_objects={'policy_kwargs': MLPExtractor.get_policy_kwargs()})
 
     def _gdown(self) -> str:
         data_path = "rl-model.zip"
@@ -89,7 +88,6 @@ class SubmittedAgent(Agent):
     def predict(self, obs):
         # This uses if-statements for recovery and trained PPO model for attack/strategy
         # During recovery, the agent does not attack
-
         self.time += 1
 
         # Recovery
